@@ -1,0 +1,71 @@
+name: Sync ECC upstream
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/quiet-momentum-sync-upstream.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ecc-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'hackhead95/ecc'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Merge upstream without discarding fork commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json, os, urllib.request, urllib.error
+          repo = "hackhead95/ecc"
+          upstream = "affaan-m/ECC"
+          def api(path, payload=None):
+              request = urllib.request.Request(
+                  "https://api.github.com/repos/" + path,
+                  data=None if payload is None else json.dumps(payload).encode("utf-8"),
+                  headers={
+                      "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "Content-Type": "application/json",
+                  },
+                  method="GET" if payload is None else "POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=45) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit("Sync stopped: GitHub HTTP " + str(error.code) +
+                      ". Check conflict, branch protection or token permissions. No force reset attempted.")
+          metadata = api(repo)
+          if not metadata.get("fork") or metadata.get("parent", {}).get("full_name", "").lower() != upstream.lower():
+              raise SystemExit("Unexpected fork parent; refusing mutation.")
+          if metadata.get("default_branch") != "main":
+              raise SystemExit("Default branch changed; review configuration.")
+          before = api(repo + "/git/ref/heads/main")["object"]["sha"]
+          upstream_sha = api(upstream + "/git/ref/heads/main")["object"]["sha"]
+          comparison = api(repo + "/compare/" + upstream_sha + "..." + before)
+          if comparison["status"] in ("identical", "ahead"):
+              result = "Already contains the current upstream."
+          else:
+              result = api(repo + "/merge-upstream", {"branch": "main"}).get("message", "Merge requested.")
+          after = api(repo + "/git/ref/heads/main")["object"]["sha"]
+          for ancestor in (before, upstream_sha):
+              if api(repo + "/compare/" + ancestor + "..." + after)["status"] not in ("identical", "ahead"):
+                  raise SystemExit("Post-sync ancestry verification failed; manual inspection required.")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("# ECC upstream sync\n\n" + result +
+                  "\n\nBefore: " + before + "\n\nUpstream observed: " + upstream_sha +
+                  "\n\nAfter: " + after +
+                  "\n\nFork history preserved. Installed project skills were not changed.\n")
+          print(result)
