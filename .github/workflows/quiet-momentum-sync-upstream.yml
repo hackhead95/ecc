@@ -5,7 +5,7 @@ on:
     - cron: '17 2 * * *'
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [automation/upstream-sync]
     paths: ['.github/workflows/quiet-momentum-sync-upstream.yml']
 
 permissions:
@@ -45,12 +45,11 @@ jobs:
                   with urllib.request.urlopen(request, timeout=45) as response:
                       return json.load(response)
               except urllib.error.HTTPError as error:
-                  raise SystemExit("Sync stopped: GitHub HTTP " + str(error.code) +
-                      ". Check conflict, branch protection or token permissions. No force reset attempted.")
+                  raise SystemExit("Sync stopped at " + path + ": HTTP " + str(error.code) + ": " + error.read().decode("utf-8")[:2000])
           metadata = api(repo)
           if not metadata.get("fork") or metadata.get("parent", {}).get("full_name", "").lower() != upstream.lower():
               raise SystemExit("Unexpected fork parent; refusing mutation.")
-          if metadata.get("default_branch") != "main":
+          if metadata.get("default_branch") != "automation/upstream-sync":
               raise SystemExit("Default branch changed; review configuration.")
           before = api(repo + "/git/ref/heads/main")["object"]["sha"]
           upstream_sha = api(upstream + "/git/ref/heads/main")["object"]["sha"]
