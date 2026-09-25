@@ -62,9 +62,19 @@ jobs:
           for ancestor in (before, upstream_sha):
               if api(repo + "/compare/" + ancestor + "..." + after)["status"] not in ("identical", "ahead"):
                   raise SystemExit("Post-sync ancestry verification failed; manual inspection required.")
+          # Scheduled workflows run from the default branch, so it has to track
+          # main too; otherwise they keep running on a frozen lockfile.
+          default = "automation/upstream-sync"
+          if api(repo + "/compare/" + after + "..." + default)["status"] in ("identical", "ahead"):
+              default_result = default + " already contains main."
+          else:
+              api(repo + "/merges", {"base": default, "head": "main",
+                  "commit_message": "Merge main into " + default + " (scheduled sync)"})
+              default_result = "Merged main into " + default + "."
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("# ECC upstream sync\n\n" + result +
                   "\n\nBefore: " + before + "\n\nUpstream observed: " + upstream_sha +
-                  "\n\nAfter: " + after +
+                  "\n\nAfter: " + after + "\n\n" + default_result +
                   "\n\nFork history preserved. Installed project skills were not changed.\n")
           print(result)
+          print(default_result)
